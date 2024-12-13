@@ -1,0 +1,31 @@
+.asset-builder {
+	position: relative;
+	user-select: none;
+	margin: 100px;
+
+	canvas#result {
+		image-rendering: pixelated;
+	}
+
+	.crop {
+		position: absolute;
+
+		&.default {
+			box-shadow: inset #ffffff 0px 0px 0px 1px;
+		}
+
+		&.current {
+			box-shadow: inset #22aa22 0px 0px 0px 1px;
+		}
+
+		&.selected {
+			box-shadow: inset #cccccc 0px 0px 0px 1px;
+		}
+	}
+
+	.current-crop {
+		background: #eee;
+		color: #333;
+		padding: 4px 8px;
+	}
+}

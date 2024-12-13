@@ -1,0 +1,262 @@
+﻿@page "/assets"
+@rendermode InteractiveAuto
+
+<h3>Asset Builder</h3>
+
+<div class="asset-builder">
+    <canvas id="result"></canvas>
+
+    @foreach (var crop in Crops) {
+        <div class=@("crop "
+            + (crop.Id == SelectedCropId ? "selected" : "default"))
+            style=@($"left: {crop.X}px;"
+            + $"top: {crop.Y}px;"
+            + $"width: {crop.Width}px;"
+            + $"height: {crop.Height}px;")></div>
+    }
+
+    @if (StartedDraggingAt is not null && CurrentDragPosition is not null) {
+        if (SelectedCropId is not null && DragElementClickLocation is not null) {
+            var selectedCrop = Crops.FirstOrDefault(c => c.Id == SelectedCropId);
+
+            var x = CurrentDragPosition.Value.X - DragElementClickLocation.Value.X;
+            var y = CurrentDragPosition.Value.Y - DragElementClickLocation.Value.Y;
+
+            <div class="crop selected" style=@($"left: {x}px;"
+                 + $"top: {y}px;"
+                 + $"width: {selectedCrop.Width}px;"
+                 + $"height: {selectedCrop.Height}px;")>
+            </div>
+        } else {
+            var x0 = Math.Min(StartedDraggingAt.Value.X, CurrentDragPosition.Value.X);
+            var y0 = Math.Min(StartedDraggingAt.Value.Y, CurrentDragPosition.Value.Y);
+            var x1 = Math.Max(StartedDraggingAt.Value.X, CurrentDragPosition.Value.X);
+            var y1 = Math.Max(StartedDraggingAt.Value.Y, CurrentDragPosition.Value.Y);
+
+            var width = x1 - x0;
+            var height = y1 - y0;
+            var area = width * height;
+
+            <div class="crop current" style=@($"left: {x0}px;" 
+                + $"top: {y0}px;" 
+                + $"width: {width}px;" 
+                + $"height: {height}px;")>
+            </div>
+        
+            <div class="current-crop">
+                Crop top left: @x0, @y0. &nbsp;
+                Size: @width,@height. &nbsp;
+                Area: @area
+            </div>
+        }
+    }
+</div>
+
+@code {
+    /*
+     * TODO: 
+     *  - [X] Enable nearest neighbour rendering on canvas
+     *  - [ ] Add Crop select
+     *  - [ ] Add Crop resizing
+     *  - [ ] Add zoom
+     */
+
+    [Inject]
+    public required IJSRuntime JS { get; set; }
+
+    private List<Crop> Crops = new();
+    private (float X, float Y)? StartedDraggingAt;
+    private (float X, float Y)? CurrentDragPosition;
+    private (float X, float Y)? DragElementClickLocation;
+    private Guid? SelectedCropId;
+    private CanvasElement Canvas;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (!firstRender) {
+            return;
+        }
+
+        var window = await Window.Get(JS);
+        var document = await Document.Get(JS);
+
+        Canvas = await document.GetElementById<CanvasElement>("result");
+
+        await Canvas.SetWidth(300);
+        await Canvas.SetHeight(300);
+
+        var context = await Canvas.GetContext<CanvasRenderingContext2D>("2d");
+
+        await context.SetFillStyle("#ff00ff");
+
+        var width = await Canvas.GetWidth();
+        var height = await Canvas.GetHeight();
+
+        await context.FillRect(0, 0, width, height);
+
+        await context.SetFillStyle("#000000");
+        await context.FillRect(0, 0, width / 2, height / 2);
+        await context.FillRect(width / 2, height / 2, width / 2, height / 2);
+
+        var image = await Image.FromURL("/assetpacks/pack1/TileMap.png", JS);
+
+        Console.WriteLine(image);
+
+        await context.DrawImage(image, 0, 0);
+
+        await window.AddEventListener<MouseEvent>("mousedown", nameof(OnWindowMouseDown), this);
+        await window.AddEventListener<MouseEvent>("mousemove", nameof(OnWindowMouseMove), this);
+        await window.AddEventListener<MouseEvent>("mouseup", nameof(OnWindowMouseUp), this);
+    }
+
+    [JSInvokable]
+    public async ValueTask OnWindowMouseDown(MouseEvent ev) {
+        var cursor = await GetCanvasCursorPosition(ev);
+
+        var canvasWidth = await Canvas.GetWidth();
+        var canvasHeight = await Canvas.GetHeight();
+
+        if (cursor.Left < 0 || cursor.Top < 0 || cursor.Left >= canvasWidth || cursor.Top >= canvasHeight) {
+            return;
+        }
+
+        var selectedCrop = Crops.FirstOrDefault(c => c.Contains(cursor.Left, cursor.Top));
+
+        if (selectedCrop is not null) {
+            SelectedCropId = selectedCrop.Id;
+
+            StartedDraggingAt = (cursor.Left, cursor.Top);
+
+            var canvasOffset = await Canvas.GetBoundingClientRect();
+
+            // Calculate the distance from the top-left of the crop to the clicked point.
+            var clickOffsetX = ev.ClientX - canvasOffset.Left - selectedCrop.X;
+            var clickOffsetY = ev.ClientY - canvasOffset.Top - selectedCrop.Y;
+
+            DragElementClickLocation = (clickOffsetX, clickOffsetY);
+
+            StateHasChanged();
+
+            return;
+        }
+
+        SelectedCropId = null;
+
+        StartedDraggingAt = (cursor.Left, cursor.Top);
+    }
+
+    [JSInvokable]
+    public async ValueTask OnWindowMouseMove(MouseEvent ev) {
+        if (StartedDraggingAt is null) {
+            return;
+        }
+
+        var cursor = await GetCanvasCursorPosition(ev, clamp: true);
+
+        var canvasWidth = await Canvas.GetWidth();
+        var canvasHeight = await Canvas.GetHeight();
+
+        var minDragX = 0f;
+        var minDragY = 0f;
+        var maxDragX = (float)canvasWidth;
+        var maxDragY = (float)canvasHeight;
+
+        if (SelectedCropId is not null && DragElementClickLocation is not null) {
+            var selectedCrop = Crops.FirstOrDefault(c => c.Id == SelectedCropId);
+
+            minDragX = DragElementClickLocation.Value.X;
+            minDragY = DragElementClickLocation.Value.Y;
+            maxDragX = canvasWidth - selectedCrop.Width + DragElementClickLocation.Value.X;
+            maxDragY = canvasHeight - selectedCrop.Height + DragElementClickLocation.Value.Y;
+        }
+
+        CurrentDragPosition = (
+            Clamp(cursor.Left, minDragX, maxDragX),
+            Clamp(cursor.Top, minDragY, maxDragY)
+        );
+
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public async ValueTask OnWindowMouseUp(MouseEvent ev) {
+        if (StartedDraggingAt is null) {
+            return;
+        }
+
+        var cursor = await GetCanvasCursorPosition(ev, clamp: true);
+
+        if (SelectedCropId is not null && DragElementClickLocation is not null) {
+            var canvasWidth = await Canvas.GetWidth();
+            var canvasHeight = await Canvas.GetHeight();
+
+            var canvasOffset = await Canvas.GetBoundingClientRect();
+            var newOffsetX = ev.ClientX - canvasOffset.Left - DragElementClickLocation.Value.X;
+            var newOffsetY = ev.ClientY - canvasOffset.Top - DragElementClickLocation.Value.Y;
+
+            var selectedCrop = Crops.FirstOrDefault(c => c.Id == SelectedCropId);
+
+            selectedCrop.X = Clamp(newOffsetX, 0, canvasWidth - selectedCrop.Width);
+            selectedCrop.Y = Clamp(newOffsetY, 0, canvasHeight - selectedCrop.Height);
+
+            StartedDraggingAt = null;
+            CurrentDragPosition = null;
+
+            StateHasChanged();
+
+            return;
+        }
+        
+        var x0 = Math.Min(StartedDraggingAt.Value.X, cursor.Left);
+        var y0 = Math.Min(StartedDraggingAt.Value.Y, cursor.Top);
+        var x1 = Math.Max(StartedDraggingAt.Value.X, cursor.Left);
+        var y1 = Math.Max(StartedDraggingAt.Value.Y, cursor.Top);
+
+        var width = x1 - x0;
+        var height = y1 - y0;
+
+        Crops.Add(new Crop {
+            Id = Guid.NewGuid(),
+            X = x0,
+            Y = y0,
+            Width = width,
+            Height = height
+        });
+
+        StartedDraggingAt = null;
+        CurrentDragPosition = null;
+        DragElementClickLocation = null;
+        SelectedCropId = null;
+
+        StateHasChanged();
+    }
+
+    private async ValueTask<(float Left, float Top)> GetCanvasCursorPosition(MouseEvent ev, bool clamp = false) {
+        var box = await Canvas.GetBoundingClientRect();
+
+        // "GetBoundingClientRect" returns sub-pixel values.
+        var cursorX = ev.ClientX - box.Left;
+        var cursorY = ev.ClientY - box.Top;
+
+        var maxWidth = await Canvas.GetWidth();
+        var maxHeight = await Canvas.GetHeight();
+
+        if (clamp) {
+            cursorX = Clamp(cursorX, 0, maxWidth);
+            cursorY = Clamp(cursorY, 0, maxHeight);
+        }
+
+        return (cursorX, cursorY);
+    }
+
+    static float Clamp(float value, float min, float max) => Math.Min(max, Math.Max(min, value));
+
+    public class Crop {
+        public required Guid Id { get; init; }
+        public required float X { get; set; }
+        public required float Y { get; set; }
+        public required float Width { get; set; }
+        public required float Height { get; set; }
+
+        public bool Contains(float x, float y) => !(x < X || x >= X + Width || y < Y || y >= Y + Height);
+    }
+}

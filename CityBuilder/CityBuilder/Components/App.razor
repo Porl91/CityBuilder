@@ -1,0 +1,173 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<base href="/" />
+	<link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
+	<link rel="stylesheet" href="@Assets["app.css"]" />
+	<link rel="stylesheet" href="@Assets["CityBuilder.styles.css"]" />
+	<ImportMap />
+	<link rel="icon" type="image/png" href="favicon.png" />
+	<HeadOutlet />
+</head>
+
+<body>
+	<Routes />
+	<script src="_framework/blazor.web.js"></script>
+	<script>
+		window.getWindow = function() {
+			return window;
+		}
+
+		window.getDocument = function() {
+			return document;
+		}
+
+		window.constructObject = function(constructorName) {
+			if (window[constructorName] === undefined) {
+				throw new Error("Constructor does not exist", constructorName);
+			}
+
+			const args = [ ...arguments ].slice(2);
+
+			return new window[constructorName](...args);
+		}
+
+		window.callMethod = function(obj, methodName) {
+			const args = [ ...arguments ].slice(2);
+
+			const fn = obj[methodName]?.bind(obj);
+
+			if (fn === undefined) {
+				throw new Error(`Method ${methodName} does not exist on object.`, { obj, methodName });
+			}
+
+			return fn(...args);
+		}
+
+		function getParentOfNode(obj, fullPath) {
+			const segments = fullPath.split(".");
+
+			if (segments.length === 0) {
+				return null;
+			}
+
+			const path = segments.slice(0, segments.length - 1);
+			const leaf = segments[segments.length - 1];
+
+			let current = obj;
+
+			while (path.length > 0 && current !== undefined) {
+				const node = path.shift();
+
+				current = current[node];
+			}
+
+			if (current === undefined) {
+				return null;
+			}
+
+			return {
+				parent: current, 
+				field: leaf
+			}
+		}
+
+		window.getProperty = function(obj, name) {
+			const node = getParentOfNode(obj, name);
+
+			if (node === null) {
+				return;
+			}
+
+			const { parent, field } = node;
+
+			return parent[field];
+		}
+
+		window.setProperty = function(obj, name, value) {
+			const node = getParentOfNode(obj, name);
+
+			if (node === null) {
+				return;
+			}
+
+			const { parent, field } = node;
+
+			parent[field] = value;
+		}
+
+		window.loadImage = function(url) {
+			return new Promise((res, rej) => {
+				const image = new Image();
+				image.onload = () => res(image);
+				image.onerror = rej;
+				image.src = url;
+			});
+		}
+
+		window.EventEmitter = {};
+
+		window.EventEmitter = {
+			emitters: {},
+
+			createEmitter: (element, eventName, emitterId, dotNetHelper) => {
+				const eventListener = ev => dotNetHelper.invokeMethodAsync("OnEvent", {
+					...toPOCO(ev),
+					nativeEvent: DotNet.createJSObjectReference(ev)
+				});
+
+				element.addEventListener(eventName, eventListener);
+
+				EventEmitter.emitters[emitterId] = {
+					element,
+					eventName,
+					eventListener
+				};
+			},
+
+			removeEmitter: emitterId => {
+				const emitter = EventEmitter.emitters[emitterId];
+
+				if (!emitter) {
+					return;
+				}
+
+				emitter.element.removeEventListener(emitter.eventName, emitter.eventListener);
+
+				delete EventEmitter.emitters[emitterId];
+			}
+		};
+
+		window.addElementEventListener = function(element, eventName, callbackName, dotNetHelper) {
+			const eventListener = ev => dotNetHelper.invokeMethodAsync(callbackName, {
+				...toPOCO(ev),
+				nativeEvent: DotNet.createJSObjectReference(ev)
+			});
+
+			element.addEventListener(eventName, eventListener);
+		}
+
+		function toPOCO(obj) {
+			const supportedTypes = ["string", "number", "boolean"];
+
+			const result = {};
+
+			for (const key in obj) {
+				const value = obj[key];
+
+				if (!supportedTypes.includes(typeof value)) {
+					continue;
+				}
+
+				result[key] = value;
+			}
+
+			return result;
+		}
+	</script>
+</body>
+
+</html>
